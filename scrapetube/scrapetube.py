@@ -1,18 +1,16 @@
+
 import json
 import time
-from typing import Generator
-
 import requests
-from typing_extensions import Literal
 
+type_property_map = {
+    "videos": "videoRenderer",
+    "streams": "videoRenderer",
+    "shorts": "reelItemRenderer"
+}
 
-def get_channel(
-    channel_id: str = None,
-    channel_url: str = None,
-    limit: int = None,
-    sleep: int = 1,
-    sort_by: Literal["newest", "oldest", "popular"] = "newest",
-) -> Generator[dict, None, None]:
+def get_channel(channel_id=None,channel_url=None,limit=None,sleep=1,sort_by='newest',content_type='videos'):
+
 
     """Get videos for a channel.
 
@@ -39,21 +37,57 @@ def get_channel(
             ``"oldest"``: Get the old videos first.
             ``"popular"``: Get the popular videos first. Defaults to "newest".
     """
-
+    if not channel_url:
+        channel_url = "https://www.youtube.com/channel/%s"%channel_id
     sort_by_map = {"newest": "dd", "oldest": "da", "popular": "p"}
-    url = "{url}/videos?view=0&sort={sort_by}&flow=grid".format(
-        url=channel_url or f"https://www.youtube.com/channel/{channel_id}",
-        sort_by=sort_by_map[sort_by],
-    )
+    url = "%s/%s?view=0&sort=%s&flow=grid"%(channel_url,content_type,sort_by_map[sort_by])
     api_endpoint = "https://www.youtube.com/youtubei/v1/browse"
-    videos = get_videos(url, api_endpoint, "gridVideoRenderer", limit, sleep)
+    videos = get_videos(url, api_endpoint, type_property_map[content_type], limit, sleep)
     for video in videos:
         yield video
 
+def get_videos(url,api_endpoint,selector,limit,sleep):
+    session = requests.Session()
+    session.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.101 Safari/537.36"
+    is_first = True
+    quit = False
+    count = 0
+    while True:
+        if is_first:
+            html = get_initial_data(session, url)
+            client = json.loads(
+                get_json_from_html(html, "INNERTUBE_CONTEXT", 2, '"}},') + '"}}'
+            )["client"]
+            api_key = get_json_from_html(html, "innertubeApiKey", 3)
+            session.headers["X-YouTube-Client-Name"] = "1"
+            session.headers["X-YouTube-Client-Version"] = client["clientVersion"]
+            data = json.loads(
+                get_json_from_html(html, "var ytInitialData = ", 0, "};") + "}"
+            )
+            next_data = get_next_data(data)
+            is_first = False
+        else:
+            data = get_ajax_data(session, api_endpoint, api_key, next_data, client)
+            next_data = get_next_data(data)
+        for result in get_videos_items(data, selector):
+            try:
+                count += 1
+                yield result
+                if count == limit:
+                    quit = True
+                    break
+            except:
+                quit = True
+                break
 
-def get_playlist(
-    playlist_id: str, limit: int = None, sleep: int = 1
-) -> Generator[dict, None, None]:
+        if not next_data or quit:
+            break
+
+        time.sleep(sleep)
+
+    session.close()
+
+def get_playlist(playlist_id,limit=None,sleep=1):
 
     """Get videos for a playlist.
 
@@ -68,21 +102,13 @@ def get_playlist(
             Seconds to sleep between API calls to youtube, in order to prevent getting blocked.
             Defaults to 1.
     """
-
-    url = f"https://www.youtube.com/playlist?list={playlist_id}"
+    url = "https://www.youtube.com/playlist?list=%s"%playlist_id
     api_endpoint = "https://www.youtube.com/youtubei/v1/browse"
     videos = get_videos(url, api_endpoint, "playlistVideoRenderer", limit, sleep)
     for video in videos:
         yield video
 
-
-def get_search(
-    query: str,
-    limit: int = None,
-    sleep: int = 1,
-    sort_by: Literal["relevance", "upload_date", "view_count", "rating"] = "relevance",
-    results_type: Literal["video", "channel", "playlist", "movie"] = "video",
-) -> Generator[dict, None, None]:
+def get_search(query,limit=None,sleep=1,sort_by="relevance",results_type="video"):
 
     """Search youtube and get videos.
 
@@ -123,9 +149,9 @@ def get_search(
         "playlist": ["D", "playlistRenderer"],
         "movie": ["E", "videoRenderer"],
     }
-
-    param_string = f"CA{sort_by_map[sort_by]}SAhA{results_type_map[results_type][0]}"
-    url = f"https://www.youtube.com/results?search_query={query}&sp={param_string}"
+    
+    param_string = "CA%sSAhA%s"%(sort_by_map[sort_by],results_type_map[results_type][0])
+    url = "https://www.youtube.com/results?search_query=%s&sp=%s"%(query,param_string)
     api_endpoint = "https://www.youtube.com/youtubei/v1/search"
     videos = get_videos(
         url, api_endpoint, results_type_map[results_type][1], limit, sleep
@@ -133,54 +159,7 @@ def get_search(
     for video in videos:
         yield video
 
-
-def get_videos(
-    url: str, api_endpoint: str, selector: str, limit: int, sleep: int
-) -> Generator[dict, None, None]:
-    session = requests.Session()
-    session.headers[
-        "User-Agent"
-    ] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.101 Safari/537.36"
-    is_first = True
-    quit = False
-    count = 0
-    while True:
-        if is_first:
-            html = get_initial_data(session, url)
-            client = json.loads(
-                get_json_from_html(html, "INNERTUBE_CONTEXT", 2, '"}},') + '"}}'
-            )["client"]
-            api_key = get_json_from_html(html, "innertubeApiKey", 3)
-            session.headers["X-YouTube-Client-Name"] = "1"
-            session.headers["X-YouTube-Client-Version"] = client["clientVersion"]
-            data = json.loads(
-                get_json_from_html(html, "var ytInitialData = ", 0, "};") + "}"
-            )
-            next_data = get_next_data(data)
-            is_first = False
-        else:
-            data = get_ajax_data(session, api_endpoint, api_key, next_data, client)
-            next_data = get_next_data(data)
-        for result in get_videos_items(data, selector):
-            try:
-                count += 1
-                yield result
-                if count == limit:
-                    quit = True
-                    break
-            except GeneratorExit:
-                quit = True
-                break
-
-        if not next_data or quit:
-            break
-
-        time.sleep(sleep)
-
-    session.close()
-
-
-def get_initial_data(session: requests.Session, url: str) -> str:
+def get_initial_data(session, url):
     response = session.get(url)
     if "uxe=" in response.request.url:
         session.cookies.set("CONSENT", "YES+cb", domain=".youtube.com")
@@ -189,29 +168,12 @@ def get_initial_data(session: requests.Session, url: str) -> str:
     html = response.text
     return html
 
-
-def get_ajax_data(
-    session: requests.Session,
-    api_endpoint: str,
-    api_key: str,
-    next_data: dict,
-    client: dict,
-) -> dict:
-    data = {
-        "context": {"clickTracking": next_data["click_params"], "client": client},
-        "continuation": next_data["token"],
-    }
-    response = session.post(api_endpoint, params={"key": api_key}, json=data)
-    return response.json()
-
-
-def get_json_from_html(html: str, key: str, num_chars: int = 2, stop: str = '"') -> str:
+def get_json_from_html(html, key, num_chars=2, stop='"'):
     pos_begin = html.find(key) + len(key) + num_chars
     pos_end = html.find(stop, pos_begin)
     return html[pos_begin:pos_end]
 
-
-def get_next_data(data: dict) -> dict:
+def get_next_data(data):
     raw_next_data = next(search_dict(data, "continuationEndpoint"), None)
     if not raw_next_data:
         return None
@@ -222,8 +184,7 @@ def get_next_data(data: dict) -> dict:
 
     return next_data
 
-
-def search_dict(partial: dict, search_key: str) -> Generator[dict, None, None]:
+def search_dict(partial, search_key):
     stack = [partial]
     while stack:
         current_item = stack.pop(0)
@@ -237,6 +198,13 @@ def search_dict(partial: dict, search_key: str) -> Generator[dict, None, None]:
             for value in current_item:
                 stack.append(value)
 
+def get_ajax_data(session,api_endpoint,api_key,next_data,client):
+    data = {
+        "context": {"clickTracking": next_data["click_params"], "client": client},
+        "continuation": next_data["token"],
+    }
+    response = session.post(api_endpoint, params={"key": api_key}, json=data)
+    return response.json()
 
-def get_videos_items(data: dict, selector: str) -> Generator[dict, None, None]:
-    return search_dict(data, selector)
+def get_videos_items(data,selector):
+    return search_dict(data, selector)    
