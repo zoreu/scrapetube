@@ -25,10 +25,11 @@ scrapetube_classifiers = [
 
 setup(name="scrapetube",
     version=version,
+    packages=["scrapetube"],
+    include_package_data=True,
     author="Cheskel Twersky",
     author_email="twerskycheskel@gmail.com",
     url="https://github.com/zoreu/scrapetube",
-    py_modules=["scrapetube"],
     description="Scrape youtube without the official youtube api and without selenium.",
     long_description=readme,
     license="MIT",
