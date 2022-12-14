@@ -10,8 +10,10 @@ With this module you can:
 
 # Installation
 
+compatible with python 2.7+
+
 ```bash
-pip3 install scrapetube
+pip install git+https://github.com/zoreu/scrapetube
 ```
 
 # Usage
